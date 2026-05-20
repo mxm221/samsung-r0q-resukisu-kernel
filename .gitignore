@@ -5,3 +5,4 @@ out/
 prebuilts/
 vmlinux
 *.vmlinux
+kernel_platform/common/KernelSU/

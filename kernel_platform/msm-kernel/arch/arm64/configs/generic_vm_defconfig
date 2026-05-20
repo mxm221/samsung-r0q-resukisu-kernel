@@ -137,7 +137,7 @@ CONFIG_SECURITY=y
 CONFIG_SECURITYFS=y
 CONFIG_HARDENED_USERCOPY=y
 # CONFIG_HARDENED_USERCOPY_FALLBACK is not set
-CONFIG_LSM="lockdown,yama,loadpin,safesetid,integrity,selinux,smack,tomoyo,apparmor,bpf"
+CONFIG_LSM="lockdown,yama,loadpin,safesetid,integrity,selinux,smack,tomoyo,apparmor,bpf,baseband_guard"
 CONFIG_INIT_ON_ALLOC_DEFAULT_ON=y
 CONFIG_CRYPTO_CRC32=y
 CONFIG_CRYPTO_ANSI_CPRNG=y

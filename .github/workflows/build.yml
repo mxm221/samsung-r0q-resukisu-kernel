@@ -85,6 +85,15 @@ jobs:
           echo "==> remaining baseband refs (should be none):"
           grep -niE 'baseband[-_]guard|CONFIG_BBG' "$K" "$M" "$DEF" || echo "(clean)"
 
+      - name: Make KernelSU a git repo (satisfy ReSukiSU submodule check)
+        run: |
+          cd kernel_platform/common/KernelSU
+          git init -q
+          git add -A 2>/dev/null || true
+          git -c user.email=ci@local -c user.name=ci commit -q -m "ci snapshot" 2>/dev/null || true
+          echo "KernelSU has .git: $([ -e .git ] && echo yes || echo no)"
+          echo "KernelSU commit count: $(git rev-list --count HEAD 2>/dev/null || echo 0)"
+
       - name: Build kernel (Samsung GKI mixed build)
         run: |
           set -o pipefail

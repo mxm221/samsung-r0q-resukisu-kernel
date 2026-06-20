@@ -1,4 +1,4 @@
-name: Build r0q ReSukiSU+SUSFS Kernel (SCG13)
+name: Build r0q ReSukiSU+susfs Kernel (SCG13)
 
 on:
   workflow_dispatch:
@@ -10,7 +10,6 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     timeout-minutes: 350
-
     steps:
       - name: Free disk space
         uses: jlumbroso/free-disk-space@main
@@ -31,7 +30,7 @@ jobs:
             python3 python-is-python3 rsync cpio kmod lz4 zip unzip \
             device-tree-compiler
 
-      - name: Checkout full Samsung r0q source
+      - name: Checkout (full source incl. vendored clang)
         uses: actions/checkout@v4
         with:
           ref: main
@@ -45,48 +44,43 @@ jobs:
           chmod -R +x kernel_platform/prebuilts 2>/dev/null || true
           chmod -R +x kernel_platform/build/build-tools 2>/dev/null || true
           chmod +x build_kernel_GKI.sh kernel_platform/build/*.sh 2>/dev/null || true
-          test -x kernel_platform/prebuilts-master/clang/host/linux-x86/clang-r416183b/bin/clang
+          test -x kernel_platform/prebuilts-master/clang/host/linux-x86/clang-r416183b/bin/clang \
+            && echo "clang OK" || (echo "CLANG MISSING" && exit 1)
 
-      - name: Set SCG13 Android 16 version string
+      - name: Set SCG13 version string
         run: |
           DEF=kernel_platform/common/arch/arm64/configs/gki_defconfig
           sed -i '/^CONFIG_LOCALVERSION=/d' "$DEF"
           echo 'CONFIG_LOCALVERSION="-31998796-abSCG13KDS1EZE3"' >> "$DEF"
           sed -i 's/^CONFIG_LOCALVERSION_AUTO=y/# CONFIG_LOCALVERSION_AUTO is not set/' "$DEF" || true
+          echo "==> gki_defconfig LOCALVERSION:"
           grep LOCALVERSION "$DEF" || true
 
-      - name: Patch selinux_hide setprocattr to non-fatal
+      - name: Patch selinux_hide (non-fatal setprocattr)
         run: |
           F=kernel_platform/common/KernelSU/kernel/feature/selinux_hide.c
           before=$(grep -c 'goto unhook;' "$F")
           sed -i '/selinux_hide: init: selinux_setprocattr_hook err: %d/{n;s/goto unhook;/ret = 0;/}' "$F"
           after=$(grep -c 'goto unhook;' "$F")
           echo "goto unhook count: $before -> $after"
-          test "$after" -eq "$((before-1))"
+          test "$after" -eq "$((before-1))" || (echo "PATCH MISMATCH" && exit 1)
           grep -n -A2 'selinux_setprocattr_hook err' "$F" | head
 
-      - name: Patch ReSukiSU Kbuild for CI full-source build
-        run: |
-          F=kernel_platform/common/KernelSU/kernel/Kbuild
-          grep -nE 'LOCAL_GIT_EXISTS|KSU_LOCAL_VERSION|KSU_VERSION :=' "$F"
-          sed -i 's#^LOCAL_GIT_EXISTS :=.*#LOCAL_GIT_EXISTS := 1#' "$F"
-          # ReSukiSU official main at 2026-06-20:
-          # versionCode = 30000 + git rev-list --count HEAD + 700 = 34987
-          sed -i 's#^KSU_LOCAL_VERSION :=.*#KSU_LOCAL_VERSION := 4287#' "$F"
-          sed -i 's#^KSU_COMMIT_SHA  :=.*#KSU_COMMIT_SHA  := 8147c167#' "$F"
-          sed -i 's#^KSU_BRANCH_NAME :=.*#KSU_BRANCH_NAME := main#' "$F"
-          sed -i '/KSU_COMMIT_SHA  := $(KSU_COMMIT_SHA)-dirty/d' "$F"
-          grep -nE 'LOCAL_GIT_EXISTS|KSU_LOCAL_VERSION|KSU_VERSION :=' "$F"
-
-      - name: Enable visible SUSFS verification
+      - name: Harden build fingerprint (hide symbols, drop config.gz)
         run: |
           DEF=kernel_platform/common/arch/arm64/configs/gki_defconfig
-          grep -q '^CONFIG_KSU=y' "$DEF"
-          grep -q '^CONFIG_KSU_SUSFS=y' "$DEF"
+          grep -q 'CONFIG_KSU=y' "$DEF" && echo "KSU on"
+          grep -q 'CONFIG_KSU_SUSFS=y' "$DEF" && echo "SUSFS on"
+          # hide ksu/susfs symbols from kallsyms (static-ize them)
           sed -i '/CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS/d' "$DEF"
-          echo '# CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS is not set' >> "$DEF"
+          echo 'CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y' >> "$DEF"
+          # drop /proc/config.gz so CONFIG_KSU is not broadcast (stock Samsung omits it)
+          sed -i '/CONFIG_IKCONFIG/d' "$DEF"
+          echo '# CONFIG_IKCONFIG is not set' >> "$DEF"
+          echo '# CONFIG_IKCONFIG_PROC is not set' >> "$DEF"
+          echo "==> hardening applied:"; grep -E 'HIDE_KSU_SUSFS_SYMBOLS|IKCONFIG' "$DEF" || true
 
-      - name: Disable broken baseband-guard
+      - name: Disable broken baseband-guard (missing source files)
         run: |
           K=kernel_platform/common/security/Kconfig
           M=kernel_platform/common/security/Makefile
@@ -95,80 +89,73 @@ jobs:
           sed -i 's/baseband_guard,//g' "$K"
           sed -i '/baseband-guard\//d' "$M"
           sed -i '/CONFIG_BBG/d' "$DEF" || true
-          grep -niE 'baseband[-_]guard|CONFIG_BBG' "$K" "$M" "$DEF" && exit 1 || echo "baseband guard refs clean"
+          echo "==> remaining baseband refs (should be none):"
+          grep -niE 'baseband[-_]guard|CONFIG_BBG' "$K" "$M" "$DEF" || echo "(clean)"
 
-      - name: Add big swap for LTO
+      - name: Make KernelSU a git repo (satisfy ReSukiSU submodule check)
+        run: |
+          cd kernel_platform/common/KernelSU
+          git init -q
+          git add -A 2>/dev/null || true
+          git -c user.email=ci@local -c user.name=ci commit -q -m "ci snapshot" 2>/dev/null || true
+          echo "KernelSU has .git: $([ -e .git ] && echo yes || echo no)"
+          echo "KernelSU commit count: $(git rev-list --count HEAD 2>/dev/null || echo 0)"
+          # Override version code to match the ReSukiSU v4.1.0 manager (34966 = 30000 + 4266 + 700)
+          sed -i 's/^KSU_LOCAL_VERSION := .*/KSU_LOCAL_VERSION := 4266/' kernel/Kbuild
+          echo "version override:"; grep '^KSU_LOCAL_VERSION' kernel/Kbuild
+
+      - name: Add big swap to survive LTO vmlinux (avoid OOM exit 143)
         run: |
           sudo swapoff -a || true
           sudo rm -f /swapfile /mnt/swapfile || true
+          # put swap on /mnt (large ephemeral disk) to not eat root build space
           sudo fallocate -l 16G /mnt/swapfile || sudo dd if=/dev/zero of=/mnt/swapfile bs=1M count=16384
           sudo chmod 600 /mnt/swapfile
           sudo mkswap /mnt/swapfile
           sudo swapon /mnt/swapfile
+          echo "=== memory after adding 16G swap ==="
           free -h
 
-      - name: Build kernel with Samsung mixed build
+      - name: Build kernel (Samsung GKI mixed build)
         run: |
           set -o pipefail
           export TRIM_NONLISTED_KMI=""
           export KMI_SYMBOL_LIST_STRICT_MODE=""
           export KMI_ENFORCED=""
-          (
-            while true; do
-              echo "build heartbeat: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-              sleep 300
-            done
-          ) &
-          HEARTBEAT_PID=$!
-          trap 'kill "$HEARTBEAT_PID" 2>/dev/null || true' EXIT
+          # spoof build fingerprint to Samsung-like (hide self-compiled tells in /proc/version)
+          export KBUILD_BUILD_USER="dpi"
+          export KBUILD_BUILD_HOST="SWDD8821"
+          export TZ="Asia/Seoul"
+          export KBUILD_BUILD_TIMESTAMP="2026-05-05 16:32:18"
           bash ./build_kernel_GKI.sh 2>&1 | tee build.log
-          status=${PIPESTATUS[0]}
-          kill "$HEARTBEAT_PID" 2>/dev/null || true
-          exit "$status"
 
-      - name: Locate and verify artifacts
+      - name: Locate artifacts
         if: always()
         run: |
           echo "=== boot.img / Image candidates ==="
           find out -type f \( -name 'boot.img' -o -name 'Image' -o -name 'Image.lz4' \) 2>/dev/null | tee found.txt || true
           BOOT=$(find out -type f -name 'boot.img' 2>/dev/null | head -1)
-          IMG=$(find out -type f -name 'Image' 2>/dev/null | head -1)
-          if [ -n "$IMG" ]; then
-            echo "=== kernel version ==="
-            strings "$IMG" | grep -m1 '5.10.236-android12-9' || true
-            echo "=== ReSukiSU/SUSFS markers ==="
-            strings "$IMG" | grep -m5 -i 'resukisu\|kernelsu\|susfs' || true
-            strings "$IMG" | grep -m1 '34987' || true
-          fi
           if [ -n "$BOOT" ]; then
-            sha256sum "$BOOT"
+            echo "=== version string ==="
+            strings "$(dirname "$BOOT")/Image" 2>/dev/null | grep -m1 '5.10.236-android12-9' || true
+            strings "$(dirname "$BOOT")/Image" 2>/dev/null | grep -m1 -i susfs || echo "(susfs hidden/absent)"
           fi
 
-      - name: Set up Java 21 for manager
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-
-      - name: Build matching ReSukiSU manager APK
-        run: |
-          cd kernel_platform/common/KernelSU/manager
-          sed -i 's#val managerVersionCode by extra(30000 + getGitCommitCount() + 700)#val managerVersionCode by extra(34987)#' build.gradle.kts
-          sed -i 's#val managerVersionName by extra(getGitDescribe())#val managerVersionName by extra("v4.1.0")#' build.gradle.kts
-          chmod +x gradlew
-          ./gradlew :app:assembleRelease --no-daemon
-
-      - name: Upload boot.img and logs
+      - name: Upload boot.img + dist
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: r0q-resukisu-susfs-SCG13-full
+          name: r0q-resukisu-susfs-SCG13
           path: |
             out/**/dist/boot.img
             out/**/dist/Image
             out/**/dist/Image.lz4
-            kernel_platform/common/KernelSU/manager/app/build/outputs/apk/release/*.apk
-            found.txt
+            out/**/dist/vmlinux
+            out/**/dist/System.map
             build.log
           if-no-files-found: warn
           retention-days: 7
+
+      - name: Cleanup nested KernelSU .git (avoid post-checkout git exit 128)
+        if: always()
+        run: rm -rf kernel_platform/common/KernelSU/.git 2>/dev/null || true

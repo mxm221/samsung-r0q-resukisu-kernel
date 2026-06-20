@@ -73,8 +73,21 @@ jobs:
           grep -q 'CONFIG_KSU_SUSFS=y' "$DEF" && echo "SUSFS on"
           echo '# CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS is not set' >> "$DEF"
 
+      - name: Disable broken baseband-guard (missing source files)
+        run: |
+          K=kernel_platform/common/security/Kconfig
+          M=kernel_platform/common/security/Makefile
+          DEF=kernel_platform/common/arch/arm64/configs/gki_defconfig
+          sed -i '\#source "security/baseband-guard/Kconfig"#d' "$K"
+          sed -i 's/baseband_guard,//g' "$K"
+          sed -i '/baseband-guard\//d' "$M"
+          sed -i '/CONFIG_BBG/d' "$DEF" || true
+          echo "==> remaining baseband refs (should be none):"
+          grep -niE 'baseband[-_]guard|CONFIG_BBG' "$K" "$M" "$DEF" || echo "(clean)"
+
       - name: Build kernel (Samsung GKI mixed build)
         run: |
+          set -o pipefail
           export TRIM_NONLISTED_KMI=""
           export KMI_SYMBOL_LIST_STRICT_MODE=""
           export KMI_ENFORCED=""

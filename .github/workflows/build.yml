@@ -97,6 +97,16 @@ jobs:
           sed -i '/CONFIG_BBG/d' "$DEF" || true
           grep -niE 'baseband[-_]guard|CONFIG_BBG' "$K" "$M" "$DEF" && exit 1 || echo "baseband guard refs clean"
 
+      - name: Add big swap for LTO
+        run: |
+          sudo swapoff -a || true
+          sudo rm -f /swapfile /mnt/swapfile || true
+          sudo fallocate -l 16G /mnt/swapfile || sudo dd if=/dev/zero of=/mnt/swapfile bs=1M count=16384
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          free -h
+
       - name: Build kernel with Samsung mixed build
         run: |
           set -o pipefail

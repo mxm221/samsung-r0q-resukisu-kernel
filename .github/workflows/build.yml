@@ -78,22 +78,22 @@ jobs:
             echo "== $F =="; grep -n 'ksu_handle_faccessat\|ksu_handle_stat\|__ksu_is_allow_uid_for_current' "$F" | head || true
           done
 
-      - name: DIAGNOSTIC build (visible symbols, keep config.gz, dmesg readable)
+      - name: Harden build fingerprint (hide symbols, drop config.gz, dmesg restricted)
         run: |
           DEF=kernel_platform/common/arch/arm64/configs/gki_defconfig
           grep -q 'CONFIG_KSU=y' "$DEF" && echo "KSU on"
           grep -q 'CONFIG_KSU_SUSFS=y' "$DEF" && echo "SUSFS on"
-          # keep ksu/susfs symbols visible (diagnosis)
+          # hide ksu/susfs symbols from kallsyms (static-ize)
           sed -i '/CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS/d' "$DEF"
-          echo '# CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS is not set' >> "$DEF"
-          # keep /proc/config.gz (diagnosis)
+          echo 'CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y' >> "$DEF"
+          # drop /proc/config.gz so CONFIG_KSU is not broadcast (stock Samsung omits it)
           sed -i '/CONFIG_IKCONFIG/d' "$DEF"
-          echo 'CONFIG_IKCONFIG=y' >> "$DEF"
-          echo 'CONFIG_IKCONFIG_PROC=y' >> "$DEF"
-          # allow non-root dmesg so we can read the kernel KSU log
+          echo '# CONFIG_IKCONFIG is not set' >> "$DEF"
+          echo '# CONFIG_IKCONFIG_PROC is not set' >> "$DEF"
+          # restrict dmesg to root
           sed -i '/CONFIG_SECURITY_DMESG_RESTRICT/d' "$DEF"
-          echo '# CONFIG_SECURITY_DMESG_RESTRICT is not set' >> "$DEF"
-          echo "==> diagnostic config:"; grep -E 'HIDE_KSU_SUSFS_SYMBOLS|IKCONFIG|DMESG_RESTRICT' "$DEF" || true
+          echo 'CONFIG_SECURITY_DMESG_RESTRICT=y' >> "$DEF"
+          echo "==> hardened config:"; grep -E 'HIDE_KSU_SUSFS_SYMBOLS|IKCONFIG|DMESG_RESTRICT' "$DEF" || true
 
       - name: Disable broken baseband-guard (missing source files)
         run: |

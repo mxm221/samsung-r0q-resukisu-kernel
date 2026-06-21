@@ -66,19 +66,34 @@ jobs:
           test "$after" -eq "$((before-1))" || (echo "PATCH MISMATCH" && exit 1)
           grep -n -A2 'selinux_setprocattr_hook err' "$F" | head
 
-      - name: Harden build fingerprint (hide symbols, drop config.gz)
+      - name: Fix grant path (manager fd install + unconditional sucompat hooks)
+        run: |
+          SU=kernel_platform/common/KernelSU/kernel/hook/setuid_hook.c
+          # let the manager install its ioctl fd even if is_zygote() misfires on Samsung's zygote domain
+          sed -i 's/if (!is_zygote(current_cred())) {/if (!is_zygote(current_cred()) \&\& !ksu_is_manager_uid(new_uid)) {/' "$SU"
+          echo "== setuid_hook gate =="; grep -n 'is_zygote(current_cred())' "$SU" || true
+          # drop the allow-uid guard so faccessat/stat sucompat hooks fire unconditionally (upstream behavior)
+          for F in kernel_platform/common/fs/open.c kernel_platform/common/fs/stat.c; do
+            sed -i '/if (unlikely(__ksu_is_allow_uid_for_current(current_uid().val)))/d' "$F"
+            echo "== $F =="; grep -n 'ksu_handle_faccessat\|ksu_handle_stat\|__ksu_is_allow_uid_for_current' "$F" | head || true
+          done
+
+      - name: DIAGNOSTIC build (visible symbols, keep config.gz, dmesg readable)
         run: |
           DEF=kernel_platform/common/arch/arm64/configs/gki_defconfig
           grep -q 'CONFIG_KSU=y' "$DEF" && echo "KSU on"
           grep -q 'CONFIG_KSU_SUSFS=y' "$DEF" && echo "SUSFS on"
-          # hide ksu/susfs symbols from kallsyms (static-ize them)
+          # keep ksu/susfs symbols visible (diagnosis)
           sed -i '/CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS/d' "$DEF"
-          echo 'CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y' >> "$DEF"
-          # drop /proc/config.gz so CONFIG_KSU is not broadcast (stock Samsung omits it)
+          echo '# CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS is not set' >> "$DEF"
+          # keep /proc/config.gz (diagnosis)
           sed -i '/CONFIG_IKCONFIG/d' "$DEF"
-          echo '# CONFIG_IKCONFIG is not set' >> "$DEF"
-          echo '# CONFIG_IKCONFIG_PROC is not set' >> "$DEF"
-          echo "==> hardening applied:"; grep -E 'HIDE_KSU_SUSFS_SYMBOLS|IKCONFIG' "$DEF" || true
+          echo 'CONFIG_IKCONFIG=y' >> "$DEF"
+          echo 'CONFIG_IKCONFIG_PROC=y' >> "$DEF"
+          # allow non-root dmesg so we can read the kernel KSU log
+          sed -i '/CONFIG_SECURITY_DMESG_RESTRICT/d' "$DEF"
+          echo '# CONFIG_SECURITY_DMESG_RESTRICT is not set' >> "$DEF"
+          echo "==> diagnostic config:"; grep -E 'HIDE_KSU_SUSFS_SYMBOLS|IKCONFIG|DMESG_RESTRICT' "$DEF" || true
 
       - name: Disable broken baseband-guard (missing source files)
         run: |

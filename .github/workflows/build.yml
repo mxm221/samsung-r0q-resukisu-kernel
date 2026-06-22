@@ -78,17 +78,19 @@ jobs:
             echo "== $F =="; grep -n 'ksu_handle_faccessat\|ksu_handle_stat\|__ksu_is_allow_uid_for_current' "$F" | head || true
           done
 
-      - name: Drop /proc/config.gz only (no symbol-hide; HIDE_KSU_SUSFS_SYMBOLS bootlooped before)
+      - name: Hide /proc/config.gz (KEEP IKCONFIG=y to avoid bootloop, only drop IKCONFIG_PROC)
         run: |
           DEF=kernel_platform/common/arch/arm64/configs/gki_defconfig
           grep -q 'CONFIG_KSU=y' "$DEF" && echo "KSU on"
           grep -q 'CONFIG_KSU_SUSFS=y' "$DEF" && echo "SUSFS on"
-          # drop /proc/config.gz so CONFIG_KSU is not broadcast (stock Samsung omits it)
-          # NOTE: this is the ONLY hardening. Symbol-hide removed (it bootlooped); dmesg-restrict removed too.
-          sed -i '/CONFIG_IKCONFIG/d' "$DEF"
-          echo '# CONFIG_IKCONFIG is not set' >> "$DEF"
+          # CRITICAL: dropping CONFIG_IKCONFIG bootloops THIS Samsung kernel (confirmed 2x: hardened + clean).
+          # So KEEP CONFIG_IKCONFIG=y, and only disable IKCONFIG_PROC -> /proc/config.gz disappears, kernel still boots.
+          sed -i '/CONFIG_IKCONFIG_PROC/d' "$DEF"
+          sed -i '/^CONFIG_IKCONFIG=/d' "$DEF"
+          sed -i '/# CONFIG_IKCONFIG is not set/d' "$DEF"
+          echo 'CONFIG_IKCONFIG=y' >> "$DEF"
           echo '# CONFIG_IKCONFIG_PROC is not set' >> "$DEF"
-          echo "==> config.gz dropped (should show 'is not set'):"; grep -E 'IKCONFIG' "$DEF" || true
+          echo "==> IKCONFIG kept ON, PROC exposure OFF:"; grep -E 'IKCONFIG' "$DEF" || true
 
       - name: Disable broken baseband-guard (missing source files)
         run: |

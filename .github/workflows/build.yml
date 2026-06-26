@@ -1,9 +1,9 @@
-name: Build r0q ReSukiSU+susfs Kernel (SCG13)
+name: Build r0q ReSukiSU+susfs Kernel (SCG13 detector hardening)
 
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ main, detector-kernel-20260626 ]
     paths-ignore: [ '**.md' ]
 
 jobs:
@@ -33,7 +33,7 @@ jobs:
       - name: Checkout (full source incl. vendored clang)
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.ref_name }}
           fetch-depth: 1
           lfs: false
           submodules: false
@@ -47,14 +47,25 @@ jobs:
           test -x kernel_platform/prebuilts-master/clang/host/linux-x86/clang-r416183b/bin/clang \
             && echo "clang OK" || (echo "CLANG MISSING" && exit 1)
 
-      - name: Set SCG13 version string
+      - name: Set SCG13 stock-like version and detector config
         run: |
           DEF=kernel_platform/common/arch/arm64/configs/gki_defconfig
           sed -i '/^CONFIG_LOCALVERSION=/d' "$DEF"
+          sed -i '/^CONFIG_LOCALVERSION_AUTO=/d' "$DEF"
+          sed -i '/^# CONFIG_LOCALVERSION_AUTO is not set/d' "$DEF"
           echo 'CONFIG_LOCALVERSION="-31998796-abSCG13KDS1EZE3"' >> "$DEF"
-          sed -i 's/^CONFIG_LOCALVERSION_AUTO=y/# CONFIG_LOCALVERSION_AUTO is not set/' "$DEF" || true
-          echo "==> gki_defconfig LOCALVERSION:"
-          grep LOCALVERSION "$DEF" || true
+          echo '# CONFIG_LOCALVERSION_AUTO is not set' >> "$DEF"
+          sed -i '/CONFIG_IKCONFIG_PROC/d' "$DEF"
+          sed -i '/^CONFIG_IKCONFIG=/d' "$DEF"
+          sed -i '/# CONFIG_IKCONFIG is not set/d' "$DEF"
+          echo 'CONFIG_IKCONFIG=y' >> "$DEF"
+          echo '# CONFIG_IKCONFIG_PROC is not set' >> "$DEF"
+          sed -i '/CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS/d' "$DEF"
+          echo 'CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y' >> "$DEF"
+          sed -i '/CONFIG_KSU_SUSFS_ENABLE_LOG/d' "$DEF"
+          echo '# CONFIG_KSU_SUSFS_ENABLE_LOG is not set' >> "$DEF"
+          echo "== LOCALVERSION/IKCONFIG/KSU =="
+          grep -E 'LOCALVERSION|IKCONFIG|KSU_SUSFS_HIDE|KSU_SUSFS_ENABLE_LOG' "$DEF" || true
 
       - name: Patch selinux_hide (non-fatal setprocattr)
         run: |
@@ -66,31 +77,44 @@ jobs:
           test "$after" -eq "$((before-1))" || (echo "PATCH MISMATCH" && exit 1)
           grep -n -A2 'selinux_setprocattr_hook err' "$F" | head
 
+      - name: Patch SELinux dirty-rule oracle and kallsyms surface
+        run: |
+          python3 - <<'PY'
+from pathlib import Path
+p = Path('kernel_platform/common/KernelSU/kernel/selinux/sepolicy.c')
+s = p.read_text()
+needle = '    // allow us do any ioctl\n'
+insert = '''    // Detector hardening: keep fsck_untrusted from inheriting broad sys_admin capability.\n    ksu_deny(db, "fsck_untrusted", "fsck_untrusted", "capability", "sys_admin");\n    ksu_deny(db, "fsck_untrusted", "self", "capability", "sys_admin");\n\n'''
+if insert not in s:
+    if needle not in s:
+        raise SystemExit('SELinux insertion point not found')
+    s = s.replace(needle, insert + needle, 1)
+p.write_text(s)
+
+p = Path('kernel_platform/common/kernel/kallsyms.c')
+s = p.read_text()
+needle = 'susfs_starts_with(iter->name, "ksu_") ||\n'
+extra = '''susfs_starts_with(iter->name, "setup_ksu_") ||\n\t\t\tsusfs_starts_with(iter->name, "do_ksu_") ||\n\t\t\tsusfs_starts_with(iter->name, "anon_ksu_") ||\n\t\t\tsusfs_starts_with(iter->name, "is_task_ksu_") ||\n\t\t\tsusfs_starts_with(iter->name, "sukisu") ||\n\t\t\t'''
+if extra not in s:
+    if needle not in s:
+        raise SystemExit('kallsyms insertion point not found')
+    s = s.replace(needle, extra + needle, 1)
+s = s.replace('proc_create("kallsyms", 0444, NULL, &kallsyms_proc_ops);',
+              'proc_create("kallsyms", 0400, NULL, &kallsyms_proc_ops);')
+p.write_text(s)
+PY
+          echo "== fsck deny =="; grep -n 'fsck_untrusted' kernel_platform/common/KernelSU/kernel/selinux/sepolicy.c
+          echo "== kallsyms hardening =="; grep -n 'setup_ksu_\|proc_create("kallsyms"' kernel_platform/common/kernel/kallsyms.c
+
       - name: Fix grant path (manager fd install + unconditional sucompat hooks)
         run: |
           SU=kernel_platform/common/KernelSU/kernel/hook/setuid_hook.c
-          # let the manager install its ioctl fd even if is_zygote() misfires on Samsung's zygote domain
           sed -i 's/if (!is_zygote(current_cred())) {/if (!is_zygote(current_cred()) \&\& !ksu_is_manager_uid(new_uid)) {/' "$SU"
           echo "== setuid_hook gate =="; grep -n 'is_zygote(current_cred())' "$SU" || true
-          # drop the allow-uid guard so faccessat/stat sucompat hooks fire unconditionally (upstream behavior)
           for F in kernel_platform/common/fs/open.c kernel_platform/common/fs/stat.c; do
             sed -i '/if (unlikely(__ksu_is_allow_uid_for_current(current_uid().val)))/d' "$F"
             echo "== $F =="; grep -n 'ksu_handle_faccessat\|ksu_handle_stat\|__ksu_is_allow_uid_for_current' "$F" | head || true
           done
-
-      - name: Hide /proc/config.gz (KEEP IKCONFIG=y to avoid bootloop, only drop IKCONFIG_PROC)
-        run: |
-          DEF=kernel_platform/common/arch/arm64/configs/gki_defconfig
-          grep -q 'CONFIG_KSU=y' "$DEF" && echo "KSU on"
-          grep -q 'CONFIG_KSU_SUSFS=y' "$DEF" && echo "SUSFS on"
-          # CRITICAL: dropping CONFIG_IKCONFIG bootloops THIS Samsung kernel (confirmed 2x: hardened + clean).
-          # So KEEP CONFIG_IKCONFIG=y, and only disable IKCONFIG_PROC -> /proc/config.gz disappears, kernel still boots.
-          sed -i '/CONFIG_IKCONFIG_PROC/d' "$DEF"
-          sed -i '/^CONFIG_IKCONFIG=/d' "$DEF"
-          sed -i '/# CONFIG_IKCONFIG is not set/d' "$DEF"
-          echo 'CONFIG_IKCONFIG=y' >> "$DEF"
-          echo '# CONFIG_IKCONFIG_PROC is not set' >> "$DEF"
-          echo "==> IKCONFIG kept ON, PROC exposure OFF:"; grep -E 'IKCONFIG' "$DEF" || true
 
       - name: Disable broken baseband-guard (missing source files)
         run: |
@@ -104,23 +128,22 @@ jobs:
           echo "==> remaining baseband refs (should be none):"
           grep -niE 'baseband[-_]guard|CONFIG_BBG' "$K" "$M" "$DEF" || echo "(clean)"
 
-      - name: Make KernelSU a git repo (satisfy ReSukiSU submodule check)
+      - name: Make KernelSU a clean git repo and align ReSukiSU manager 34987
         run: |
           cd kernel_platform/common/KernelSU
+          sed -i 's/^KSU_LOCAL_VERSION := .*/KSU_LOCAL_VERSION := 4287/' kernel/Kbuild
           git init -q
           git add -A 2>/dev/null || true
-          git -c user.email=ci@local -c user.name=ci commit -q -m "ci snapshot" 2>/dev/null || true
+          git -c user.email=ci@local -c user.name=ci commit -q -m "ci snapshot 34987 detector hardening" 2>/dev/null || true
           echo "KernelSU has .git: $([ -e .git ] && echo yes || echo no)"
           echo "KernelSU commit count: $(git rev-list --count HEAD 2>/dev/null || echo 0)"
-          # Override version code to align with official ReSukiSU 34987 (34987 = 30000 + 4287 + 700)
-          sed -i 's/^KSU_LOCAL_VERSION := .*/KSU_LOCAL_VERSION := 4287/' kernel/Kbuild
+          git diff-index --quiet HEAD && echo "KernelSU tree clean" || (echo "KernelSU tree dirty" && git status --short && exit 1)
           echo "version override:"; grep '^KSU_LOCAL_VERSION' kernel/Kbuild
 
       - name: Add big swap to survive LTO vmlinux (avoid OOM exit 143)
         run: |
           sudo swapoff -a || true
           sudo rm -f /swapfile /mnt/swapfile || true
-          # put swap on /mnt (large ephemeral disk) to not eat root build space
           sudo fallocate -l 16G /mnt/swapfile || sudo dd if=/dev/zero of=/mnt/swapfile bs=1M count=16384
           sudo chmod 600 /mnt/swapfile
           sudo mkswap /mnt/swapfile
@@ -134,37 +157,42 @@ jobs:
           export TRIM_NONLISTED_KMI=""
           export KMI_SYMBOL_LIST_STRICT_MODE=""
           export KMI_ENFORCED=""
-          # spoof build fingerprint to Samsung-like (hide self-compiled tells in /proc/version)
           export KBUILD_BUILD_USER="dpi"
           export KBUILD_BUILD_HOST="SWDD8821"
-          export TZ="Asia/Seoul"
-          export KBUILD_BUILD_TIMESTAMP="2026-05-05 16:32:18"
+          export TZ="UTC"
+          export KBUILD_BUILD_TIMESTAMP="Fri Feb 13 08:16:49 UTC 2026"
           bash ./build_kernel_GKI.sh 2>&1 | tee build.log
 
-      - name: Locate artifacts
+      - name: Locate and package artifacts
         if: always()
         run: |
           echo "=== boot.img / Image candidates ==="
           find out -type f \( -name 'boot.img' -o -name 'Image' -o -name 'Image.lz4' \) 2>/dev/null | tee found.txt || true
           BOOT=$(find out -type f -name 'boot.img' 2>/dev/null | head -1)
           if [ -n "$BOOT" ]; then
+            mkdir -p packaged
+            cp "$BOOT" packaged/boot.img
+            (cd packaged && tar -H ustar -cf boot_detector_hardened_34987.tar boot.img)
             echo "=== version string ==="
             strings "$(dirname "$BOOT")/Image" 2>/dev/null | grep -m1 '5.10.236-android12-9' || true
-            strings "$(dirname "$BOOT")/Image" 2>/dev/null | grep -m1 -i susfs || echo "(susfs hidden/absent)"
+            strings "$(dirname "$BOOT")/Image" 2>/dev/null | grep -m1 -i 'dirty' && exit 1 || echo "no dirty marker found in first scan"
           fi
 
       - name: Upload boot.img + dist
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: r0q-resukisu-susfs-SCG13
+          name: r0q-resukisu-susfs-SCG13-detector-hardened
           path: |
+            packaged/boot.img
+            packaged/boot_detector_hardened_34987.tar
             out/**/dist/boot.img
             out/**/dist/Image
             out/**/dist/Image.lz4
             out/**/dist/vmlinux
             out/**/dist/System.map
             build.log
+            found.txt
           if-no-files-found: warn
           retention-days: 7
 

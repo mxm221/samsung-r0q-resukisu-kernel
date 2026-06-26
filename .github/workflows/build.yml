@@ -1,4 +1,4 @@
-name: Build r0q ReSukiSU+susfs Kernel (SCG13)
+name: Build r0q E exact-stable flags keep config.gz
 
 on:
   workflow_dispatch:
@@ -78,27 +78,16 @@ jobs:
             echo "== $F =="; grep -n 'ksu_handle_faccessat\|ksu_handle_stat\|__ksu_is_allow_uid_for_current' "$F" | head || true
           done
 
-      - name: Restrict /proc/config.gz to root-only (keep IKCONFIG_PROC enabled)
+      - name: Keep config.gz readable and force symbol-hide OFF (exact stable control)
         run: |
           DEF=kernel_platform/common/arch/arm64/configs/gki_defconfig
-          grep -q 'CONFIG_KSU=y' "$DEF" && echo "KSU on"
-          grep -q 'CONFIG_KSU_SUSFS=y' "$DEF" && echo "SUSFS on"
-          # CRITICAL: disabling CONFIG_IKCONFIG_PROC bootloops this SCG13/EZE3 kernel.
-          # Keep IKCONFIG and IKCONFIG_PROC enabled, but make /proc/config.gz root-only
-          # so ordinary detector app UIDs cannot read the embedded config.
-          sed -i '/CONFIG_IKCONFIG_PROC/d' "$DEF"
-          sed -i '/^CONFIG_IKCONFIG=/d' "$DEF"
-          sed -i '/# CONFIG_IKCONFIG is not set/d' "$DEF"
-          echo 'CONFIG_IKCONFIG=y' >> "$DEF"
-          echo 'CONFIG_IKCONFIG_PROC=y' >> "$DEF"
-          echo "==> IKCONFIG and PROC kept ON:"; grep -E 'IKCONFIG' "$DEF" || true
-          for F in kernel_platform/common/kernel/configs.c kernel_platform/msm-kernel/kernel/configs.c; do
-            test -f "$F" || continue
-            sed -i 's/proc_create("config.gz", S_IFREG | S_IRUGO/proc_create("config.gz", S_IFREG | S_IRUSR/' "$F"
-            echo "==> $F config.gz proc mode:"
-            grep -n 'proc_create("config.gz"' "$F"
-          done
-
+          grep -q '^CONFIG_IKCONFIG=y' "$DEF" || (echo "IKCONFIG is not y" && exit 1)
+          grep -q '^CONFIG_IKCONFIG_PROC=y' "$DEF" || (echo "IKCONFIG_PROC is not y" && exit 1)
+          sed -i '/CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS/d' "$DEF"
+          echo '# CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS is not set' >> "$DEF"
+          echo "==> config.gz remains readable; KSU/SUSFS symbol hiding forced OFF like known-good 20260622"
+          grep -E 'IKCONFIG|HIDE_KSU_SUSFS_SYMBOLS|CONFIG_KSU_SUSFS=y' "$DEF" || true
+          grep -R -n 'proc_create("config.gz"' kernel_platform/common/kernel kernel_platform/msm-kernel/kernel 2>/dev/null || true
       - name: Disable broken baseband-guard (missing source files)
         run: |
           K=kernel_platform/common/security/Kconfig
@@ -166,7 +155,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: r0q-resukisu-susfs-SCG13
+          name: r0q-E-exact-stable-flags-keep-configgz
           path: |
             out/**/dist/boot.img
             out/**/dist/Image

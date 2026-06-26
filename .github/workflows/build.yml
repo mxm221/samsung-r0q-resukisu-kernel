@@ -81,7 +81,7 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          p = Path('kernel_platform/common/KernelSU/kernel/selinux/sepolicy.c')
+          p = Path('kernel_platform/common/KernelSU/kernel/selinux/rules.c')
           s = p.read_text()
           needle = '    // allow us do any ioctl\n'
           insert = '''    // Detector hardening: keep fsck_untrusted from inheriting broad sys_admin capability.\n    ksu_deny(db, "fsck_untrusted", "fsck_untrusted", "capability", "sys_admin");\n    ksu_deny(db, "fsck_untrusted", "self", "capability", "sys_admin");\n\n'''
@@ -103,7 +103,7 @@ jobs:
                         'proc_create("kallsyms", 0400, NULL, &kallsyms_proc_ops);')
           p.write_text(s)
           PY
-          echo "== fsck deny =="; grep -n 'fsck_untrusted' kernel_platform/common/KernelSU/kernel/selinux/sepolicy.c
+          echo "== fsck deny =="; grep -n 'fsck_untrusted' kernel_platform/common/KernelSU/kernel/selinux/rules.c
           echo "== kallsyms hardening =="; grep -n 'setup_ksu_\|proc_create("kallsyms"' kernel_platform/common/kernel/kallsyms.c
 
       - name: Fix grant path (manager fd install + unconditional sucompat hooks)

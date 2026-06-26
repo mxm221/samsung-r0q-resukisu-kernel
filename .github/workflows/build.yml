@@ -78,19 +78,26 @@ jobs:
             echo "== $F =="; grep -n 'ksu_handle_faccessat\|ksu_handle_stat\|__ksu_is_allow_uid_for_current' "$F" | head || true
           done
 
-      - name: Hide /proc/config.gz (KEEP IKCONFIG=y to avoid bootloop, only drop IKCONFIG_PROC)
+      - name: Restrict /proc/config.gz to root-only (keep IKCONFIG_PROC enabled)
         run: |
           DEF=kernel_platform/common/arch/arm64/configs/gki_defconfig
           grep -q 'CONFIG_KSU=y' "$DEF" && echo "KSU on"
           grep -q 'CONFIG_KSU_SUSFS=y' "$DEF" && echo "SUSFS on"
-          # CRITICAL: dropping CONFIG_IKCONFIG bootloops THIS Samsung kernel (confirmed 2x: hardened + clean).
-          # So KEEP CONFIG_IKCONFIG=y, and only disable IKCONFIG_PROC -> /proc/config.gz disappears, kernel still boots.
+          # CRITICAL: disabling CONFIG_IKCONFIG_PROC bootloops this SCG13/EZE3 kernel.
+          # Keep IKCONFIG and IKCONFIG_PROC enabled, but make /proc/config.gz root-only
+          # so ordinary detector app UIDs cannot read the embedded config.
           sed -i '/CONFIG_IKCONFIG_PROC/d' "$DEF"
           sed -i '/^CONFIG_IKCONFIG=/d' "$DEF"
           sed -i '/# CONFIG_IKCONFIG is not set/d' "$DEF"
           echo 'CONFIG_IKCONFIG=y' >> "$DEF"
-          echo '# CONFIG_IKCONFIG_PROC is not set' >> "$DEF"
-          echo "==> IKCONFIG kept ON, PROC exposure OFF:"; grep -E 'IKCONFIG' "$DEF" || true
+          echo 'CONFIG_IKCONFIG_PROC=y' >> "$DEF"
+          echo "==> IKCONFIG and PROC kept ON:"; grep -E 'IKCONFIG' "$DEF" || true
+          for F in kernel_platform/common/kernel/configs.c kernel_platform/msm-kernel/kernel/configs.c; do
+            test -f "$F" || continue
+            sed -i 's/proc_create("config.gz", S_IFREG | S_IRUGO/proc_create("config.gz", S_IFREG | S_IRUSR/' "$F"
+            echo "==> $F config.gz proc mode:"
+            grep -n 'proc_create("config.gz"' "$F"
+          done
 
       - name: Disable broken baseband-guard (missing source files)
         run: |

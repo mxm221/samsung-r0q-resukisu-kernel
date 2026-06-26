@@ -80,30 +80,29 @@ jobs:
       - name: Patch SELinux dirty-rule oracle and kallsyms surface
         run: |
           python3 - <<'PY'
-from pathlib import Path
-p = Path('kernel_platform/common/KernelSU/kernel/selinux/sepolicy.c')
-s = p.read_text()
-needle = '    // allow us do any ioctl\n'
-insert = '''    // Detector hardening: keep fsck_untrusted from inheriting broad sys_admin capability.\n    ksu_deny(db, "fsck_untrusted", "fsck_untrusted", "capability", "sys_admin");\n    ksu_deny(db, "fsck_untrusted", "self", "capability", "sys_admin");\n\n'''
-if insert not in s:
-    if needle not in s:
-        raise SystemExit('SELinux insertion point not found')
-    s = s.replace(needle, insert + needle, 1)
-p.write_text(s)
-
-p = Path('kernel_platform/common/kernel/kallsyms.c')
-s = p.read_text()
-needle = 'susfs_starts_with(iter->name, "ksu_") ||\n'
-extra = '''susfs_starts_with(iter->name, "setup_ksu_") ||\n\t\t\tsusfs_starts_with(iter->name, "do_ksu_") ||\n\t\t\tsusfs_starts_with(iter->name, "anon_ksu_") ||\n\t\t\tsusfs_starts_with(iter->name, "is_task_ksu_") ||\n\t\t\tsusfs_starts_with(iter->name, "sukisu") ||\n\t\t\t'''
-if extra not in s:
-    if needle not in s:
-        raise SystemExit('kallsyms insertion point not found')
-    s = s.replace(needle, extra + needle, 1)
-s = s.replace('proc_create("kallsyms", 0444, NULL, &kallsyms_proc_ops);',
-              'proc_create("kallsyms", 0400, NULL, &kallsyms_proc_ops);')
-p.write_text(s)
-PY
-          echo "== fsck deny =="; grep -n 'fsck_untrusted' kernel_platform/common/KernelSU/kernel/selinux/sepolicy.c
+          from pathlib import Path
+          p = Path('kernel_platform/common/KernelSU/kernel/selinux/sepolicy.c')
+          s = p.read_text()
+          needle = '    // allow us do any ioctl\n'
+          insert = '''    // Detector hardening: keep fsck_untrusted from inheriting broad sys_admin capability.\n    ksu_deny(db, "fsck_untrusted", "fsck_untrusted", "capability", "sys_admin");\n    ksu_deny(db, "fsck_untrusted", "self", "capability", "sys_admin");\n\n'''
+          if insert not in s:
+              if needle not in s:
+                  raise SystemExit('SELinux insertion point not found')
+              s = s.replace(needle, insert + needle, 1)
+          p.write_text(s)
+          
+          p = Path('kernel_platform/common/kernel/kallsyms.c')
+          s = p.read_text()
+          needle = 'susfs_starts_with(iter->name, "ksu_") ||\n'
+          extra = '''susfs_starts_with(iter->name, "setup_ksu_") ||\n\t\t\tsusfs_starts_with(iter->name, "do_ksu_") ||\n\t\t\tsusfs_starts_with(iter->name, "anon_ksu_") ||\n\t\t\tsusfs_starts_with(iter->name, "is_task_ksu_") ||\n\t\t\tsusfs_starts_with(iter->name, "sukisu") ||\n\t\t\t'''
+          if extra not in s:
+              if needle not in s:
+                  raise SystemExit('kallsyms insertion point not found')
+              s = s.replace(needle, extra + needle, 1)
+          s = s.replace('proc_create("kallsyms", 0444, NULL, &kallsyms_proc_ops);',
+                        'proc_create("kallsyms", 0400, NULL, &kallsyms_proc_ops);')
+          p.write_text(s)
+          PY          echo "== fsck deny =="; grep -n 'fsck_untrusted' kernel_platform/common/KernelSU/kernel/selinux/sepolicy.c
           echo "== kallsyms hardening =="; grep -n 'setup_ksu_\|proc_create("kallsyms"' kernel_platform/common/kernel/kallsyms.c
 
       - name: Fix grant path (manager fd install + unconditional sucompat hooks)

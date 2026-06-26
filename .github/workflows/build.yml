@@ -1,4 +1,4 @@
-name: Build r0q ReSukiSU+susfs Kernel (SCG13)
+name: Build r0q D minimal keep config.gz
 
 on:
   workflow_dispatch:
@@ -56,49 +56,21 @@ jobs:
           echo "==> gki_defconfig LOCALVERSION:"
           grep LOCALVERSION "$DEF" || true
 
-      - name: Patch selinux_hide (non-fatal setprocattr)
+      - name: Skip selinux_hide source patch (boot isolation)
         run: |
-          F=kernel_platform/common/KernelSU/kernel/feature/selinux_hide.c
-          before=$(grep -c 'goto unhook;' "$F")
-          sed -i '/selinux_hide: init: selinux_setprocattr_hook err: %d/{n;s/goto unhook;/ret = 0;/}' "$F"
-          after=$(grep -c 'goto unhook;' "$F")
-          echo "goto unhook count: $before -> $after"
-          test "$after" -eq "$((before-1))" || (echo "PATCH MISMATCH" && exit 1)
-          grep -n -A2 'selinux_setprocattr_hook err' "$F" | head
-
-      - name: Fix grant path (manager fd install + unconditional sucompat hooks)
+          echo "==> no selinux_hide source mutation in this variant"
+          grep -n 'selinux_setprocattr_hook err' kernel_platform/common/KernelSU/kernel/feature/selinux_hide.c | head || true
+      - name: Skip grant path patch (boot isolation)
         run: |
-          SU=kernel_platform/common/KernelSU/kernel/hook/setuid_hook.c
-          # let the manager install its ioctl fd even if is_zygote() misfires on Samsung's zygote domain
-          sed -i 's/if (!is_zygote(current_cred())) {/if (!is_zygote(current_cred()) \&\& !ksu_is_manager_uid(new_uid)) {/' "$SU"
-          echo "== setuid_hook gate =="; grep -n 'is_zygote(current_cred())' "$SU" || true
-          # drop the allow-uid guard so faccessat/stat sucompat hooks fire unconditionally (upstream behavior)
-          for F in kernel_platform/common/fs/open.c kernel_platform/common/fs/stat.c; do
-            sed -i '/if (unlikely(__ksu_is_allow_uid_for_current(current_uid().val)))/d' "$F"
-            echo "== $F =="; grep -n 'ksu_handle_faccessat\|ksu_handle_stat\|__ksu_is_allow_uid_for_current' "$F" | head || true
-          done
-
-      - name: Restrict /proc/config.gz to root-only (keep IKCONFIG_PROC enabled)
+          echo "==> no grant path source mutation in this variant"
+          grep -n 'is_zygote(current_cred())' kernel_platform/common/KernelSU/kernel/hook/setuid_hook.c || true
+      - name: Keep /proc/config.gz stock-readable (boot control)
         run: |
           DEF=kernel_platform/common/arch/arm64/configs/gki_defconfig
-          grep -q 'CONFIG_KSU=y' "$DEF" && echo "KSU on"
-          grep -q 'CONFIG_KSU_SUSFS=y' "$DEF" && echo "SUSFS on"
-          # CRITICAL: disabling CONFIG_IKCONFIG_PROC bootloops this SCG13/EZE3 kernel.
-          # Keep IKCONFIG and IKCONFIG_PROC enabled, but make /proc/config.gz root-only
-          # so ordinary detector app UIDs cannot read the embedded config.
-          sed -i '/CONFIG_IKCONFIG_PROC/d' "$DEF"
-          sed -i '/^CONFIG_IKCONFIG=/d' "$DEF"
-          sed -i '/# CONFIG_IKCONFIG is not set/d' "$DEF"
-          echo 'CONFIG_IKCONFIG=y' >> "$DEF"
-          echo 'CONFIG_IKCONFIG_PROC=y' >> "$DEF"
-          echo "==> IKCONFIG and PROC kept ON:"; grep -E 'IKCONFIG' "$DEF" || true
-          for F in kernel_platform/common/kernel/configs.c kernel_platform/msm-kernel/kernel/configs.c; do
-            test -f "$F" || continue
-            sed -i 's/proc_create("config.gz", S_IFREG | S_IRUGO/proc_create("config.gz", S_IFREG | S_IRUSR/' "$F"
-            echo "==> $F config.gz proc mode:"
-            grep -n 'proc_create("config.gz"' "$F"
-          done
-
+          grep -q '^CONFIG_IKCONFIG=y' "$DEF" || (echo "IKCONFIG is not y" && exit 1)
+          grep -q '^CONFIG_IKCONFIG_PROC=y' "$DEF" || (echo "IKCONFIG_PROC is not y" && exit 1)
+          echo "==> leaving /proc/config.gz exactly stock-readable; no configs.c permission patch"
+          grep -R -n 'proc_create("config.gz"' kernel_platform/common/kernel kernel_platform/msm-kernel/kernel 2>/dev/null || true
       - name: Disable broken baseband-guard (missing source files)
         run: |
           K=kernel_platform/common/security/Kconfig
@@ -166,7 +138,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: r0q-resukisu-susfs-SCG13
+          name: r0q-D-minimal-keep-configgz
           path: |
             out/**/dist/boot.img
             out/**/dist/Image

@@ -108,13 +108,15 @@ jobs:
         run: |
           cd kernel_platform/common/KernelSU
           git init -q
+          # Override version code before committing so ReSukiSU does not append "-dirty".
+          # 34987 = 30000 + 4287 + 700
+          sed -i 's/^KSU_LOCAL_VERSION := .*/KSU_LOCAL_VERSION := 4287/' kernel/Kbuild
           git add -A 2>/dev/null || true
           git -c user.email=ci@local -c user.name=ci commit -q -m "ci snapshot" 2>/dev/null || true
           echo "KernelSU has .git: $([ -e .git ] && echo yes || echo no)"
           echo "KernelSU commit count: $(git rev-list --count HEAD 2>/dev/null || echo 0)"
-          # Override version code to align with official ReSukiSU 34987 (34987 = 30000 + 4287 + 700)
-          sed -i 's/^KSU_LOCAL_VERSION := .*/KSU_LOCAL_VERSION := 4287/' kernel/Kbuild
           echo "version override:"; grep '^KSU_LOCAL_VERSION' kernel/Kbuild
+          git diff-index --quiet HEAD -- || (echo "KernelSU tree is dirty"; git status --short; exit 1)
 
       - name: Add big swap to survive LTO vmlinux (avoid OOM exit 143)
         run: |

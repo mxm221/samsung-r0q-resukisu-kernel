@@ -78,7 +78,7 @@ jobs:
             echo "== $F =="; grep -n 'ksu_handle_faccessat\|ksu_handle_stat\|__ksu_is_allow_uid_for_current' "$F" | head || true
           done
 
-      - name: Strengthen: config.gz root-only, symbol-hide ON
+      - name: Strengthen: symbol-hide ON and config.gz root-only
         run: |
           DEF=kernel_platform/common/arch/arm64/configs/gki_defconfig
           grep -q '^CONFIG_IKCONFIG=y' "$DEF" || (echo "IKCONFIG is not y" && exit 1)
@@ -87,15 +87,15 @@ jobs:
           echo 'CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y' >> "$DEF"
           echo "==> KSU/SUSFS symbol hiding ON"
           grep -E 'IKCONFIG|HIDE_KSU_SUSFS_SYMBOLS|CONFIG_KSU_SUSFS=y' "$DEF" || true
-          # Keep IKCONFIG_PROC enabled, but make /proc/config.gz root-only instead of world-readable.
           python3 - <<'PY'
-from pathlib import Path
-for p in [Path('kernel_platform/common/kernel/configs.c'), Path('kernel_platform/msm-kernel/kernel/configs.c')]:
-    if p.exists():
-        s=p.read_text()
-        s=s.replace('proc_create("config.gz", S_IFREG | S_IRUGO, NULL,', 'proc_create("config.gz", S_IFREG | S_IRUSR, NULL,')
-        p.write_text(s)
-PY
+          from pathlib import Path
+          for p in [Path("kernel_platform/common/kernel/configs.c"), Path("kernel_platform/msm-kernel/kernel/configs.c")]:
+              if p.exists():
+                  s = p.read_text()
+                  s = s.replace('proc_create("config.gz", S_IFREG | S_IRUGO, NULL,', 'proc_create("config.gz", S_IFREG | S_IRUSR, NULL,')
+                  p.write_text(s)
+          PY
+          echo "==> /proc/config.gz root-only patch:"
           grep -R -n 'proc_create("config.gz"' kernel_platform/common/kernel kernel_platform/msm-kernel/kernel 2>/dev/null || true
       - name: Disable broken baseband-guard (missing source files)
         run: |

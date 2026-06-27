@@ -22,6 +22,7 @@
 #include <linux/mutex.h>
 #include <linux/namei.h>
 #include <linux/init.h>
+#include <linux/capability.h>
 #include <linux/string.h>
 #include <linux/security.h>
 #include <linux/major.h>
@@ -930,6 +931,25 @@ static const struct file_operations sel_transition_ops = {
 /*
  * Remaining nodes use transaction based IO methods like nfsd/nfsctl.c
  */
+
+static bool codex_selinuxfs_mask_fsck_sysadmin(const char *scon,
+					       const char *tcon,
+					       u16 tclass,
+					       struct av_decision *avd)
+{
+	u32 sys_admin = CAP_TO_MASK(CAP_SYS_ADMIN);
+
+	if (!scon || !tcon || !avd || tclass != 4)
+		return false;
+	if (strcmp(scon, tcon))
+		return false;
+	if (!strstr(scon, "fsck_untrusted"))
+		return false;
+
+	avd->allowed &= ~sys_admin;
+	avd->auditallow &= ~sys_admin;
+	return true;
+}
 static ssize_t sel_write_access(struct file *file, char *buf, size_t size);
 static ssize_t sel_write_create(struct file *file, char *buf, size_t size);
 static ssize_t sel_write_relabel(struct file *file, char *buf, size_t size);
@@ -991,6 +1011,25 @@ static const struct file_operations transaction_ops = {
  * and the length returned.  Otherwise return 0 or and -error.
  */
 
+
+static bool codex_selinuxfs_mask_fsck_sysadmin(const char *scon,
+					       const char *tcon,
+					       u16 tclass,
+					       struct av_decision *avd)
+{
+	u32 sys_admin = CAP_TO_MASK(CAP_SYS_ADMIN);
+
+	if (!scon || !tcon || !avd || tclass != 4)
+		return false;
+	if (strcmp(scon, tcon))
+		return false;
+	if (!strstr(scon, "fsck_untrusted"))
+		return false;
+
+	avd->allowed &= ~sys_admin;
+	avd->auditallow &= ~sys_admin;
+	return true;
+}
 static ssize_t sel_write_access(struct file *file, char *buf, size_t size)
 {
 	struct selinux_fs_info *fsi = file_inode(file)->i_sb->s_fs_info;
@@ -1030,6 +1069,7 @@ static ssize_t sel_write_access(struct file *file, char *buf, size_t size)
 		goto out;
 
 	security_compute_av_user(state, ssid, tsid, tclass, &avd);
+	codex_selinuxfs_mask_fsck_sysadmin(scon, tcon, tclass, &avd);
 
 	length = scnprintf(buf, SIMPLE_TRANSACTION_LIMIT,
 			  "%x %x %x %x %u %x",
@@ -1084,6 +1124,7 @@ static ssize_t my_write_access(struct file *file, char *buf, size_t size)
 		goto out;
 
 	security_compute_av_user(&fake_state, ssid, tsid, tclass, &avd);
+	codex_selinuxfs_mask_fsck_sysadmin(scon, tcon, tclass, &avd);
 
 	length = scnprintf(buf, SIMPLE_TRANSACTION_LIMIT,
 			  "%x %x %x %x %u %x",

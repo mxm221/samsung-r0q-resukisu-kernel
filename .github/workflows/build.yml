@@ -78,7 +78,7 @@ jobs:
             echo "== $F =="; grep -n 'ksu_handle_faccessat\|ksu_handle_stat\|__ksu_is_allow_uid_for_current' "$F" | head || true
           done
 
-      - name: Strengthen: config.gz readable, symbol-hide ON
+      - name: Strengthen: symbol-hide ON, config.gz readable
         run: |
           DEF=kernel_platform/common/arch/arm64/configs/gki_defconfig
           grep -q '^CONFIG_IKCONFIG=y' "$DEF" || (echo "IKCONFIG is not y" && exit 1)
@@ -87,7 +87,7 @@ jobs:
           echo 'CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y' >> "$DEF"
           echo "==> KSU/SUSFS symbol hiding ON"
           grep -E 'IKCONFIG|HIDE_KSU_SUSFS_SYMBOLS|CONFIG_KSU_SUSFS=y' "$DEF" || true
-          # Leave /proc/config.gz readable, matching known-good stable package.
+          echo "==> /proc/config.gz kept readable"
           grep -R -n 'proc_create("config.gz"' kernel_platform/common/kernel kernel_platform/msm-kernel/kernel 2>/dev/null || true
       - name: Disable broken baseband-guard (missing source files)
         run: |

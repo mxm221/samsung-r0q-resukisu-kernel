@@ -48,6 +48,7 @@
 #include <linux/audit.h>
 #include <linux/vmalloc.h>
 #include <net/netlabel.h>
+#include <linux/capability.h>
 
 #include "flask.h"
 #include "avc.h"
@@ -614,6 +615,33 @@ void services_compute_xperms_drivers(
 		xperms->len = 1;
 }
 
+
+static bool codex_mask_fsck_sys_admin(struct policydb *policydb,
+				      struct context *scontext,
+				      struct context *tcontext,
+				      u16 tclass)
+{
+	const char *class_name, *src_type, *tgt_type;
+
+	if (!policydb || !scontext || !tcontext || !tclass)
+		return false;
+	if (!scontext->type || !tcontext->type ||
+	    scontext->type > policydb->p_types.nprim ||
+	    tcontext->type > policydb->p_types.nprim)
+		return false;
+
+	class_name = sym_name(policydb, SYM_CLASSES, tclass - 1);
+	if (!class_name || strcmp(class_name, "capability"))
+		return false;
+
+	src_type = sym_name(policydb, SYM_TYPES, scontext->type - 1);
+	tgt_type = sym_name(policydb, SYM_TYPES, tcontext->type - 1);
+	if (!src_type || !tgt_type || strcmp(src_type, tgt_type))
+		return false;
+
+	return !strcmp(src_type, "fsck_untrusted") ||
+	       !strcmp(src_type, "fsck_untrusted_31_0");
+}
 /*
  * Compute access vectors and extended permissions based on a context
  * structure pair for the permissions in a particular class.
@@ -721,6 +749,11 @@ static void context_struct_compute_av(struct policydb *policydb,
 	 */
 	type_attribute_bounds_av(policydb, scontext, tcontext,
 				 tclass, avd);
+
+	if (codex_mask_fsck_sys_admin(policydb, scontext, tcontext, tclass)) {
+		avd->allowed &= ~CAP_TO_MASK(CAP_SYS_ADMIN);
+		avd->auditallow &= ~CAP_TO_MASK(CAP_SYS_ADMIN);
+	}
 }
 
 static int security_validtrans_handle_fail(struct selinux_state *state,

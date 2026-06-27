@@ -1,4 +1,4 @@
-name: Build r0q E exact-stable flags keep config.gz
+name: Build r0q G no fake uptime WiFi control
 
 on:
   workflow_dispatch:
@@ -33,7 +33,7 @@ jobs:
       - name: Checkout (full source incl. vendored clang)
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.ref_name }}
           fetch-depth: 1
           lfs: false
           submodules: false
@@ -155,7 +155,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: r0q-E-exact-stable-flags-keep-configgz
+          name: r0q-G-no-fake-uptime-wifi-control
           path: |
             out/**/dist/boot.img
             out/**/dist/Image

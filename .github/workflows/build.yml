@@ -78,7 +78,7 @@ jobs:
             echo "== $F =="; grep -n 'ksu_handle_faccessat\|ksu_handle_stat\|__ksu_is_allow_uid_for_current' "$F" | head || true
           done
 
-      - name: Strengthen: config.gz root-only, symbol-hide OFF
+      - name: "Strengthen: config.gz root-only, symbol-hide OFF"
         run: |
           DEF=kernel_platform/common/arch/arm64/configs/gki_defconfig
           grep -q '^CONFIG_IKCONFIG=y' "$DEF" || (echo "IKCONFIG is not y" && exit 1)
